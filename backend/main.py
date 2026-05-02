@@ -162,10 +162,27 @@ async def analyze(
     lng: float = Form(...),
     images: list[UploadFile] = File(...)
 ):
-    vision_data = await analyze_images(images)
-    gmaps_key = os.getenv("GOOGLE_MAPS_API_KEY")
-    geo_data = await get_geo_score(lat, lng, gmaps_key)
+    try:
+        if not images:
+            return {"error": "At least 1 image required"}
+        
+        if len(images) > 5:
+            return {"error": "Maximum 5 images allowed"}
+        
+        vision_data = await analyze_images(images)
+        gmaps_key = os.getenv("GOOGLE_MAPS_API_KEY")
+        geo_data = await get_geo_score(lat, lng, gmaps_key)
+        
+        final_estimate = fuse_and_estimate(vision_data, geo_data)
+        
+        return final_estimate
     
-    final_estimate = fuse_and_estimate(vision_data, geo_data)
-    
-    return final_estimate
+    except Exception as e:
+        return {"error": str(e), "status": 500}
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy",
+        "gemini_key": "configured" if os.getenv("GEMINI_API_KEY") else "missing",
+        "maps_key": "configured" if os.getenv("GOOGLE_MAPS_API_KEY") else "missing"
+    }
