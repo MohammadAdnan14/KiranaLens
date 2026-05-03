@@ -99,8 +99,15 @@ async def get_geo_score(lat: float, lng: float, gmaps_key: str) -> dict:
     competition_density = min(competition_count / 5, 1.0)
     footfall_score = min((footfall_count / 10) * 100, 100)
     
-    # Dynamic geo confidence
-    geo_confidence = 0.9 if footfall_score > 0 or competition_density > 0 else 0.4
+    # Geo confidence tied to market predictability
+    if footfall_score > 60 and competition_density > 0.3:
+        geo_confidence = 0.95
+    elif footfall_score > 40 and competition_density > 0.1:
+        geo_confidence = 0.80
+    elif footfall_score > 20 or competition_density > 0:
+        geo_confidence = 0.60
+    else:
+        geo_confidence = 0.30
     
     return {
         "competition_density": round(competition_density, 2),
@@ -125,17 +132,13 @@ def calculate_confidence(vision_data: dict, geo_data: dict, image_count: int) ->
     """Calculate confidence using multiple factors"""
     confidence_factors = []
     
-    # Factor 1: Gemini vision confidence
     confidence_factors.append(vision_data["vision_confidence"])
     
-    # Factor 2: More images = more confident
     image_confidence = min(image_count / 5, 1.0)
     confidence_factors.append(image_confidence)
     
-    # Factor 3: Geo data quality
     confidence_factors.append(geo_data["geo_confidence"])
     
-    # Factor 4: Internal consistency
     consistency = 1.0
     if vision_data["refill_signal"] == "overstocked" and vision_data["shelf_density_index"] > 80:
         consistency -= 0.15
@@ -150,7 +153,6 @@ def calculate_fraud_score(vision_data: dict, geo_data: dict) -> dict:
     fraud_score = 0
     flags = list(vision_data.get("fraud_flags", []))
     
-    # Single signal flags
     if vision_data["inventory_value_range"][1] > 500000 and geo_data["footfall_score"] < 30:
         flags.append("inventory_footfall_mismatch")
         fraud_score += 20
@@ -179,7 +181,6 @@ def calculate_fraud_score(vision_data: dict, geo_data: dict) -> dict:
         flags.append("possible_staged_inventory")
         fraud_score += 20
 
-    # Cross-signal flags
     if (vision_data["shelf_density_index"] > 85 and
         geo_data["footfall_score"] < 25 and
         vision_data["refill_signal"] == "overstocked"):
@@ -203,8 +204,20 @@ def calculate_fraud_score(vision_data: dict, geo_data: dict) -> dict:
 
     return {
         "fraud_score": min(fraud_score, 100),
-        "flags": list(set(flags))  # Remove duplicates
+        "flags": list(set(flags))
     }
+
+def generate_confidence_reason(vision_conf, image_conf, geo_conf, risk_flags):
+    """Single, concise reason for confidence"""
+    if image_conf < 0.4:
+        return "Insufficient images (upload 3–5 for higher confidence)"
+    if vision_conf < 0.6:
+        return "Image quality too low to assess accurately"
+    if geo_conf < 0.6:
+        return "Location has sparse market data"
+    if risk_flags:
+        return f"{len(risk_flags)} risk flag(s) detected"
+    return "Strong signals across all factors"
 
 def fuse_and_estimate(vision_data: dict, geo_data: dict, image_count: int) -> dict:
     """Fuse vision + geo into cash flow estimate"""
@@ -212,10 +225,8 @@ def fuse_and_estimate(vision_data: dict, geo_data: dict, image_count: int) -> di
     sku_diversity = vision_data["sku_diversity_score"]
     store_size = vision_data["store_size"]
 
-    # Base anchored to real kirana benchmarks
     base_daily = STORE_SIZE_BASE.get(store_size, 6000)
     
-    # Multipliers
     sdi_multiplier = 0.5 + (shelf_density / 100)
     sku_multiplier = 0.7 + (sku_diversity / 10) * 0.6
     footfall_multiplier = 0.8 + (geo_data["footfall_score"] / 100) * 0.6
@@ -228,7 +239,6 @@ def fuse_and_estimate(vision_data: dict, geo_data: dict, image_count: int) -> di
     monthly_revenue_low = daily_low * 26
     monthly_revenue_high = daily_high * 26
     
-    # Dynamic margin
     category_bonus = sum(
         1 for cat in vision_data["category_mix"]
         if cat.lower() in HIGH_MARGIN_CATEGORIES
@@ -239,13 +249,11 @@ def fuse_and_estimate(vision_data: dict, geo_data: dict, image_count: int) -> di
     monthly_income_low = int(monthly_revenue_low * margin_low)
     monthly_income_high = int(monthly_revenue_high * margin_high)
     
-    # Confidence and fraud
     confidence = calculate_confidence(vision_data, geo_data, image_count)
     fraud_result = calculate_fraud_score(vision_data, geo_data)
     risk_flags = fraud_result["flags"]
     fraud_score = fraud_result["fraud_score"]
 
-    # Recommendation
     if confidence > 0.75 and len(risk_flags) == 0:
         recommendation = "approve"
     elif confidence > 0.7 and len(risk_flags) <= 1:
@@ -256,12 +264,17 @@ def fuse_and_estimate(vision_data: dict, geo_data: dict, image_count: int) -> di
         recommendation = "needs_manual_review"
     else:
         recommendation = "reject"
+
+    vision_conf = vision_data["vision_confidence"]
+    image_conf = min(image_count / 5, 1.0)
+    geo_conf = geo_data["geo_confidence"]
     
     return {
         "daily_sales_range": [daily_low, daily_high],
         "monthly_revenue_range": [monthly_revenue_low, monthly_revenue_high],
         "monthly_income_range": [monthly_income_low, monthly_income_high],
         "confidence_score": confidence,
+        "confidence_reason": generate_confidence_reason(vision_conf, image_conf, geo_conf, risk_flags),
         "fraud_score": fraud_score,
         "risk_flags": risk_flags,
         "recommendation": recommendation,
@@ -287,14 +300,14 @@ async def analyze(
         if len(images) > 5:
             return {"error": "Maximum 5 images allowed"}
         
-        image_count = len(images)  # ✅ This line is here
+        image_count = len(images)
         vision_data = await analyze_images(images)
         vision_data = validate_vision_data(vision_data)
         
         gmaps_key = os.getenv("GOOGLE_MAPS_API_KEY")
         geo_data = await get_geo_score(lat, lng, gmaps_key)
         
-        final_estimate = fuse_and_estimate(vision_data, geo_data, image_count)  # ✅ Pass all 3
+        final_estimate = fuse_and_estimate(vision_data, geo_data, image_count)
         
         return final_estimate
     
