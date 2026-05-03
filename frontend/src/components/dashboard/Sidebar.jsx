@@ -44,12 +44,15 @@ export function Sidebar() {
   return (
     <aside className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col border-r border-border bg-background">
       {/* Logo */}
-      <div className="flex h-16 items-center gap-2.5 border-b border-border px-6">
+      <Link
+        to="/"
+        className="flex h-16 items-center gap-2.5 border-b border-border px-6 transition-opacity hover:opacity-80"
+      >
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent">
           <Scan className="h-4 w-4 text-accent-foreground" />
         </div>
         <span className="font-semibold text-foreground">KiranaLens</span>
-      </div>
+      </Link>
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-3 py-4">
