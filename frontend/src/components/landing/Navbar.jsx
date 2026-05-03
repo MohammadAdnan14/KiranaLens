@@ -31,9 +31,6 @@ export function Navbar() {
 
         {/* CTA */}
         <div className="flex items-center gap-3">
-          <span className="hidden rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-medium text-accent sm:inline-flex">
-            Poonawalla Fincorp
-          </span>
           <Link to="/dashboard">
             <Button size="sm" className="gap-2">
               Open Platform

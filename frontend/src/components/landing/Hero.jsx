@@ -13,15 +13,6 @@ export function Hero() {
 
       <div className="relative mx-auto max-w-7xl px-6">
         <div className="mx-auto max-w-4xl text-center">
-          {/* Badge */}
-          <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-border bg-card/50 px-4 py-2">
-            <span className="h-2 w-2 rounded-full bg-accent pulse-dot" />
-            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Enterprise Partnership
-            </span>
-            <span className="text-xs text-foreground">Poonawalla Fincorp</span>
-          </div>
-
           {/* Headline */}
           <h1 className="mb-6 text-balance text-4xl font-bold tracking-tight text-foreground sm:text-5xl lg:text-6xl">
             Institutional-Grade Underwriting for the{" "}

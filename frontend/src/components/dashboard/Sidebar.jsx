@@ -85,7 +85,7 @@ export function Sidebar() {
               Admin User
             </p>
             <p className="truncate text-xs text-muted-foreground">
-              Poonawalla Fincorp
+              Credit Analyst
             </p>
           </div>
         </div>

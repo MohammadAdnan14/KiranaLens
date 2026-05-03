@@ -30,12 +30,7 @@ export function Footer() {
           </div>
         </div>
 
-        {/* Timestamp */}
-        <div className="mt-8 border-t border-border/30 pt-6 text-center">
-          <p className="font-mono text-xs text-muted-foreground">
-            {new Date().toISOString().split("T")[0]} | Remote Cash Flow Underwriting Platform
-          </p>
-        </div>
+
       </div>
     </footer>
   )
