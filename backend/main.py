@@ -21,7 +21,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global constants
 STORE_SIZE_BASE = {
     "small": 3000,
     "medium": 6000,
@@ -69,13 +68,10 @@ async def analyze_images(images: list[UploadFile]) -> dict:
     """
     
     response = model.generate_content([prompt] + pil_images)
-    
     cleaned = response.text.strip().replace("```json", "").replace("```", "")
     return json.loads(cleaned)
 
 async def get_geo_score(lat: float, lng: float, gmaps_key: str) -> dict:
-    """Get geo signals from Google Maps Places API"""
-    
     base_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
     
     grocery_params = {
@@ -99,7 +95,6 @@ async def get_geo_score(lat: float, lng: float, gmaps_key: str) -> dict:
     competition_density = min(competition_count / 5, 1.0)
     footfall_score = min((footfall_count / 10) * 100, 100)
     
-    # Geo confidence tied to market predictability
     if footfall_score > 60 and competition_density > 0.3:
         geo_confidence = 0.95
     elif footfall_score > 40 and competition_density > 0.1:
@@ -129,14 +124,11 @@ def validate_vision_data(vision_data: dict) -> dict:
     return vision_data
 
 def calculate_confidence(vision_data: dict, geo_data: dict, image_count: int) -> float:
-    """Calculate confidence using multiple factors"""
     confidence_factors = []
-    
     confidence_factors.append(vision_data["vision_confidence"])
     
     image_confidence = min(image_count / 5, 1.0)
     confidence_factors.append(image_confidence)
-    
     confidence_factors.append(geo_data["geo_confidence"])
     
     consistency = 1.0
@@ -149,10 +141,11 @@ def calculate_confidence(vision_data: dict, geo_data: dict, image_count: int) ->
     return round(sum(confidence_factors) / len(confidence_factors), 2)
 
 def calculate_fraud_score(vision_data: dict, geo_data: dict) -> dict:
-    """Calculate fraud score with cross-signal detection"""
     fraud_score = 0
     flags = list(vision_data.get("fraud_flags", []))
+    store_size = vision_data["store_size"]
     
+    # Single-signal fraud checks
     if vision_data["inventory_value_range"][1] > 500000 and geo_data["footfall_score"] < 30:
         flags.append("inventory_footfall_mismatch")
         fraud_score += 20
@@ -181,16 +174,21 @@ def calculate_fraud_score(vision_data: dict, geo_data: dict) -> dict:
         flags.append("possible_staged_inventory")
         fraud_score += 20
 
+    # Cross-signal fraud detection
     if (vision_data["shelf_density_index"] > 85 and
         geo_data["footfall_score"] < 25 and
         vision_data["refill_signal"] == "overstocked"):
         flags.append("staged_inspection_likely")
         fraud_score += 40
     
-    if (vision_data["inventory_value_range"][1] > 400000 and
-        vision_data["store_size"] == "small"):
-        flags.append("inventory_store_size_mismatch")
-        fraud_score += 25
+    # Relative thresholds based on store size
+    expected_inventory = {"small": 150000, "medium": 350000, "large": 700000}
+    expected = expected_inventory.get(store_size, 350000)
+    actual_inv = vision_data["inventory_value_range"][1]
+    
+    if actual_inv > expected * 2.5 and geo_data["footfall_score"] < 30:
+        flags.append("inventory_overstock_vs_footfall")
+        fraud_score += 30
     
     if (vision_data["shelf_density_index"] > 90 and
         vision_data["sku_diversity_score"] > 8 and
@@ -199,8 +197,8 @@ def calculate_fraud_score(vision_data: dict, geo_data: dict) -> dict:
         fraud_score += 20
     
     if geo_data["competition_density"] > 0.7:
-        flags.append("high_competition_area_risk")
-        fraud_score += 15
+        flags.append("market_saturation_risk")
+        fraud_score += 5  # Lower score, it's market risk not fraud
 
     return {
         "fraud_score": min(fraud_score, 100),
@@ -208,7 +206,6 @@ def calculate_fraud_score(vision_data: dict, geo_data: dict) -> dict:
     }
 
 def generate_confidence_reason(vision_conf, image_conf, geo_conf, risk_flags):
-    """Single, concise reason for confidence"""
     if image_conf < 0.4:
         return "Insufficient images (upload 3–5 for higher confidence)"
     if vision_conf < 0.6:
@@ -220,25 +217,44 @@ def generate_confidence_reason(vision_conf, image_conf, geo_conf, risk_flags):
     return "Strong signals across all factors"
 
 def fuse_and_estimate(vision_data: dict, geo_data: dict, image_count: int) -> dict:
-    """Fuse vision + geo into cash flow estimate"""
     shelf_density = vision_data["shelf_density_index"]
     sku_diversity = vision_data["sku_diversity_score"]
     store_size = vision_data["store_size"]
+    inventory_value = (vision_data["inventory_value_range"][0] + 
+                       vision_data["inventory_value_range"][1]) / 2
+
+    # Check if store is effectively empty
+    if shelf_density < 15:
+        return {
+            "error": "Store appears closed or empty — cannot assess",
+            "confidence_score": 0.0,
+            "recommendation": "reject"
+        }
 
     base_daily = STORE_SIZE_BASE.get(store_size, 6000)
     
-    sdi_multiplier = 0.5 + (shelf_density / 100)
+    # Apply multipliers to adjust base estimate
+    sdi_multiplier = max(0.3, 0.5 + (shelf_density / 100))
     sku_multiplier = 0.7 + (sku_diversity / 10) * 0.6
+    
+    # Inventory multiplier: higher stock = higher sales confidence
+    expected_inventory = {"small": 150000, "medium": 350000, "large": 700000}
+    expected = expected_inventory.get(store_size, 350000)
+    inv_ratio = min(inventory_value / expected, 1.5)
+    inventory_multiplier = 0.7 + (inv_ratio * 0.3)
+    
     footfall_multiplier = 0.8 + (geo_data["footfall_score"] / 100) * 0.6
     competition_discount = 1 - (geo_data["competition_density"] * 0.3)
     
-    daily_base = base_daily * sdi_multiplier * sku_multiplier * footfall_multiplier * competition_discount
+    daily_base = (base_daily * sdi_multiplier * sku_multiplier * 
+                  inventory_multiplier * footfall_multiplier * competition_discount)
     daily_low = int(daily_base * 0.75)
     daily_high = int(daily_base * 1.25)
     
     monthly_revenue_low = daily_low * 26
     monthly_revenue_high = daily_high * 26
     
+    # Dynamic margins: high-margin categories add 2% each
     category_bonus = sum(
         1 for cat in vision_data["category_mix"]
         if cat.lower() in HIGH_MARGIN_CATEGORIES
@@ -254,6 +270,7 @@ def fuse_and_estimate(vision_data: dict, geo_data: dict, image_count: int) -> di
     risk_flags = fraud_result["flags"]
     fraud_score = fraud_result["fraud_score"]
 
+    # Recommendation logic
     if confidence > 0.75 and len(risk_flags) == 0:
         recommendation = "approve"
     elif confidence > 0.7 and len(risk_flags) <= 1:
@@ -289,8 +306,8 @@ def fuse_and_estimate(vision_data: dict, geo_data: dict, image_count: int) -> di
 
 @app.post("/analyze")
 async def analyze(
-    lat: float = Form(...),
-    lng: float = Form(...),
+    lat: str = Form(...),
+    lng: str = Form(...),
     images: list[UploadFile] = File(...)
 ):
     try:
@@ -299,6 +316,9 @@ async def analyze(
         
         if len(images) > 5:
             return {"error": "Maximum 5 images allowed"}
+        
+        lat = float(lat)
+        lng = float(lng)
         
         image_count = len(images)
         vision_data = await analyze_images(images)
